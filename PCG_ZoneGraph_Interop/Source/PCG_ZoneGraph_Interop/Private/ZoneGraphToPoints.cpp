@@ -61,7 +61,7 @@ void UPCGZoneGraphToPointsSettings::PostLoad()
 FName UPCGZoneGraphToPointsSettings::AdditionalTaskName() const
 {
 #if WITH_EDITOR
-    return ActorSelector.GetTaskName(GetDefaultNodeTitle());
+    return FName(ActorSelector.GetTaskName().ToString());
 #else
     return Super::AdditionalTaskName();
 #endif
@@ -114,10 +114,20 @@ FPCGContext* FPCGZoneGraphToPointsElement::Initialize(const FPCGDataCollection& 
 {
     FPCGZoneGraphToPointsContext* Context = new FPCGZoneGraphToPointsContext();
     Context->InputData = InputData;
-    Context->SourceComponent = SourceComponent;
     Context->Node = Node;
 
     return Context;
+}
+
+FPCGContext* FPCGZoneGraphToPointsElement::Initialize(const FPCGInitializeElementParams& InParams) {
+    FPCGZoneGraphToPointsContext* Context = new FPCGZoneGraphToPointsContext();
+    if (InParams.InputData) {
+        Context->InputData = *InParams.InputData;
+    }
+    Context->Node = InParams.Node;
+
+    return Context;
+    
 }
 
 bool FPCGZoneGraphToPointsElement::ExecuteInternal(FPCGContext* InContext) const
@@ -133,8 +143,9 @@ bool FPCGZoneGraphToPointsElement::ExecuteInternal(FPCGContext* InContext) const
     if (!Context->bPerformedQuery)
     {
         TFunction<bool(const AActor*)> BoundsCheck = [](const AActor*) -> bool { return true; };
-        const UPCGComponent* PCGComponent = Context->SourceComponent.IsValid() ? Context->SourceComponent.Get() : nullptr;
+        UPCGComponent* PCGComponent = Cast<UPCGComponent>(Context->ExecutionSource.Get());
         const AActor* Self = PCGComponent ? PCGComponent->GetOwner() : nullptr;
+
         if (Self && Settings->ActorSelector.bMustOverlapSelf)
         {
             // Capture ActorBounds by value because it goes out of scope
@@ -179,7 +190,7 @@ bool FPCGZoneGraphToPointsElement::ExecuteInternal(FPCGContext* InContext) const
             };
         }
 
-        Context->FoundActors = PCGActorSelector::FindActors(Settings->ActorSelector, Context->SourceComponent.Get(), BoundsCheck, SelfIgnoreCheck);
+        Context->FoundActors = PCGActorSelector::FindActors(Settings->ActorSelector, PCGComponent, BoundsCheck, SelfIgnoreCheck);
         Context->bPerformedQuery = true;
 
         if (Context->FoundActors.IsEmpty())
@@ -199,11 +210,14 @@ bool FPCGZoneGraphToPointsElement::ExecuteInternal(FPCGContext* InContext) const
 
             if (!WaitOnTaskIds.IsEmpty())
             {
-                UPCGSubsystem* Subsystem = Context->SourceComponent.IsValid() ? Context->SourceComponent->GetSubsystem() : nullptr;
-                if (Subsystem)
+                
+                UWorld* World = Context->ExecutionSource->GetExecutionState().GetWorld();
+                if (UPCGSubsystem* Subsystem = UPCGSubsystem::GetInstance(World))
                 {
                     // Add a trivial task after these generations that wakes up this task
                     Context->bIsPaused = true;
+
+                    
 
                     Subsystem->ScheduleGeneric(
                         [Context]()
@@ -211,7 +225,7 @@ bool FPCGZoneGraphToPointsElement::ExecuteInternal(FPCGContext* InContext) const
                             // Wake up the current task
                             Context->bIsPaused = false;
                             return true;
-                        }, Context->SourceComponent.Get(), WaitOnTaskIds);
+                        }, PCGComponent, WaitOnTaskIds);
 
                     return false;
                 }
@@ -239,7 +253,9 @@ void FPCGZoneGraphToPointsElement::GatherWaitTasks(AActor* FoundActor, FPCGConte
     }
 
     // We will prevent gathering the current execution - this task cannot wait on itself
-    AActor* ThisOwner = ((Context && Context->SourceComponent.IsValid()) ? Context->SourceComponent->GetOwner() : nullptr);
+    //
+    UPCGComponent* PCGComponent = Cast<UPCGComponent>(Context->ExecutionSource.Get());
+    AActor* ThisOwner = PCGComponent ? PCGComponent->GetOwner() : nullptr;
 
     TInlineComponentArray<UPCGComponent*, 1> PCGComponents;
     FoundActor->GetComponents(PCGComponents);
@@ -278,6 +294,8 @@ void FPCGZoneGraphToPointsElement::MergeActorsIntoPointData(FPCGContext* Context
     // we have one or more partition actors, we'll go through the normal process and do post-processing to merge the point data instead.
     const bool bContainsPartitionActors = Algo::AnyOf(FoundActors, [](const AActor* Actor) { return Cast<APCGPartitionActor>(Actor) != nullptr; });
 
+    UPCGComponent* PCGComponent = Cast<UPCGComponent>(Context->ExecutionSource.Get());
+    
     if (!bContainsPartitionActors)
     {
         UPCGPointData* Data = NewObject<UPCGPointData>();
@@ -307,7 +325,7 @@ void FPCGZoneGraphToPointsElement::MergeActorsIntoPointData(FPCGContext* Context
         {
             if (Actor)
             {
-                FPCGDataCollection Collection = UPCGComponent::CreateActorPCGDataCollection(Actor, Context->SourceComponent.Get(), EPCGDataType::Any, bParseActor);
+                FPCGDataCollection Collection = UPCGComponent::CreateActorPCGDataCollection(Actor, PCGComponent, EPCGDataType::Any, bParseActor);
                 DataToMerge.TaggedData += Collection.TaggedData;
             }
         }
@@ -350,7 +368,8 @@ void FPCGZoneGraphToPointsElement::ProcessActor(FPCGContext* Context, const UPCG
         return;
     }
 
-    const AActor* ThisOwner = ((Context && Context->SourceComponent.Get()) ? Context->SourceComponent->GetOwner() : nullptr);
+    UPCGComponent* PCGComponent = Cast<UPCGComponent>(Context->ExecutionSource.Get());
+    const AActor* ThisOwner = PCGComponent ? PCGComponent->GetOwner() : nullptr;
     
     if (FoundActor == ThisOwner) { return; } // Skip self
     
@@ -438,7 +457,7 @@ void FPCGZoneGraphToPointsElement::ProcessActor(FPCGContext* Context, const UPCG
         //SplineData->Initialize(SplineStruct);
         SplineData->Metadata->CreateAttribute(FName("LaneWidth"), ZoneLaneWidth, true, false);
         
-        Context->OutputData.TaggedData.Emplace_GetRef(SplineData);
+        Context->OutputData.TaggedData.Emplace(SplineData);
         for (FPCGTaggedData& OutputTaggedData : Context->OutputData.TaggedData)
         {
             OutputTaggedData.Tags.Append(TagInfo);
