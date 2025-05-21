@@ -10,7 +10,7 @@
 	"DocsURL": "https://procgen-labs.gitbook.io/procgen-labs-docs",
 	"MarketplaceURL": "",
 	"SupportURL": "",
-	"EngineVersion": "5.5.0",
+	"EngineVersion": "5.6.0",
 	"CanContainContent": true,
 	"Installed": true,
 	"Modules": [

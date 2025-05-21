@@ -211,7 +211,7 @@ void UZoneShapeBlueprintFunctionLibrary::PGLCreateIntersectionForSplineShape(
 
 	FZoneShapePoint ClosestPointA;
 	FZoneShapePoint ClosestPointB;
-	int32 PointBIndex;
+	int32 PointBIndex = 0;
 	float ClosestDistanceSquared = INFINITY;
 
 	for(int i = 0; i < ZoneShapePointsA.Num(); ++i)
